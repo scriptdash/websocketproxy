@@ -181,7 +181,7 @@ func (w *WebsocketProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	replicateWebsocketConn := func(dst, src *websocket.Conn, errc chan error) {
 		dst.SetPongHandler(
 			func(msg string) error {
-				src.WriteControl(websocket.PongMessage, []byte(msg), time.Now().Add(time.Second))
+				err := src.WriteControl(websocket.PongMessage, []byte(msg), time.Now().Add(time.Second))
 				if err == websocket.ErrCloseSent {
 					return nil
 				} else if e, ok := err.(net.Error); ok && e.Temporary() {
@@ -193,7 +193,7 @@ func (w *WebsocketProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 		src.SetPingHandler(
 			func(msg string) error {
-				dst.WriteControl(websocket.PingMessage, []byte(msg), time.Now().Add(time.Second))
+				err := dst.WriteControl(websocket.PingMessage, []byte(msg), time.Now().Add(time.Second))
 				if err == websocket.ErrCloseSent {
 					return nil
 				} else if e, ok := err.(net.Error); ok && e.Temporary() {
