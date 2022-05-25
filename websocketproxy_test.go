@@ -46,7 +46,7 @@ func TestProxy(t *testing.T) {
 		mux2 := http.NewServeMux()
 		mux2.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			// Don't upgrade if original host header isn't preserved
-			if r.Host !=  "127.0.0.1:7777" {
+			if r.Host != "127.0.0.1:7777" {
 				log.Printf("Host header set incorrectly.  Expecting 127.0.0.1:7777 got %s", r.Host)
 				return
 			}
@@ -126,5 +126,87 @@ func TestProxy(t *testing.T) {
 
 	if msg != string(p) {
 		t.Errorf("expecting: %s, got: %s", msg, string(p))
+	}
+}
+
+func TestProxy_PingPongFrames(t *testing.T) {
+	upgrader := &websocket.Upgrader{
+		ReadBufferSize:  4096,
+		WriteBufferSize: 4096,
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+	}
+
+	u, _ := url.Parse(backendURL)
+	proxy := NewProxy(u)
+	proxy.Upgrader = upgrader
+
+	mux := http.NewServeMux()
+	mux.Handle("/proxy", proxy)
+	go func() {
+		if err := http.ListenAndServe(":7777", mux); err != nil {
+			t.Fatal("ListenAndServe: ", err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// backend echo server
+	go func() {
+		mux2 := http.NewServeMux()
+		mux2.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// Don't upgrade if original host header isn't preserved
+			if r.Host != "127.0.0.1:7777" {
+				log.Printf("Host header set incorrectly.  Expecting 127.0.0.1:7777 got %s", r.Host)
+				return
+			}
+
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
+			conn.SetPongHandler(
+				func(msg string) error {
+					conn.WriteMessage(websocket.TextMessage, []byte("got pong"))
+					return nil
+				},
+			)
+
+			conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(time.Second))
+			for {
+				conn.ReadMessage()
+			}
+		})
+
+		err := http.ListenAndServe(":8888", mux2)
+		if err != nil {
+			t.Fatal("ListenAndServe: ", err)
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, _, err := websocket.DefaultDialer.Dial(serverURL+"/proxy", http.Header{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetPingHandler(
+		func(msg string) error {
+			conn.WriteControl(websocket.PongMessage, []byte("pong"), time.Now().Add(time.Second))
+			return nil
+		},
+	)
+
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(msg) != "got pong" {
+		t.Fatalf("expected %q, got %q", "got pong", string(msg))
 	}
 }

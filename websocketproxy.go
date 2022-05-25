@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -178,6 +179,30 @@ func (w *WebsocketProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	errClient := make(chan error, 1)
 	errBackend := make(chan error, 1)
 	replicateWebsocketConn := func(dst, src *websocket.Conn, errc chan error) {
+		dst.SetPongHandler(
+			func(msg string) error {
+				err := src.WriteControl(websocket.PongMessage, []byte(msg), time.Now().Add(time.Second))
+				if err == websocket.ErrCloseSent {
+					return nil
+				} else if e, ok := err.(net.Error); ok && e.Temporary() {
+					return nil
+				}
+				return err
+			},
+		)
+
+		src.SetPingHandler(
+			func(msg string) error {
+				err := dst.WriteControl(websocket.PingMessage, []byte(msg), time.Now().Add(time.Second))
+				if err == websocket.ErrCloseSent {
+					return nil
+				} else if e, ok := err.(net.Error); ok && e.Temporary() {
+					return nil
+				}
+				return err
+			},
+		)
+
 		for {
 			msgType, msg, err := src.ReadMessage()
 			if err != nil {
